@@ -1,0 +1,22 @@
+{
+	"PATH": "SavedData\\Primary",
+	"PATH2" : "SavedData\\Secondary",
+	"BAUD_RATE" : 1500000,
+	"HEADER" : "0xAA",
+	"time_to_run" : 10.0,
+	"DATAFMT" : {"1" : ["<h"],
+                 "2" : ["<hh"],
+                 "3" : ["<hhh"], 
+                 "4" : ["<ii"]},
+	"fs" : 44100,
+	"batch_duration" : 6,
+	"sysbreak" : "",
+	"port_timeout": 10,
+	"audio_timeout": 10,
+	"name": "IITB_IOT",
+	"password": "iitbiot1234",
+	"findport_delay": 3.0, 
+	"data_DOE" : ["Option 1", "Option 2"], 
+	"data_pump" : ["1","2","3"],
+	"data_sampleno" : ["1","2","3"]
+}

@@ -1,0 +1,2 @@
+call_main(collect_audio = True)
+delay(5)
