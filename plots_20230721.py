@@ -4,11 +4,13 @@ from plotly_resampler import FigureResampler
 import numpy as np
 from plotly.subplots import make_subplots
 import glob
+import os
 from plotly_resampler.aggregation import MinMaxLTTB
+##pip install kaleido==0.1.0post1
 
 def plots(logpath):
-    path = '\\'.join(logpath.split('\\')[:-1])
-    file_path = path + '\\*.csv'
+    folder_path = '\\'.join(logpath.split('\\')[:-1])
+    file_path = folder_path + '\\*.csv'
     Timestamp_plotted = False
     data = {}
     params = {}
@@ -39,10 +41,14 @@ def plots(logpath):
             i += 1
             index = np.arange(0, data[key].shape[0], 1)
             fig.add_trace(go.Scatter(name=key), hf_x=index, hf_y=np.array(data[key]), row=i, col=1)
+            params[f'yaxis{i}'] = {'title' : key}
 
     print(params)
-    params['title_text'] = "Data plots"
+    params['title_text'] = "Data plots " + folder_path
     params['height'] = len(data.keys()) * 600
+    params['width'] = len(data.keys()) * 600
     fig.update_layout(**params)
- 
+    plot_path = os.path.join(folder_path, 'sensor_plots.pdf')
+    print(plot_path)
+    fig.write_image(plot_path, format='pdf', engine = 'kaleido')
     fig.show_dash()

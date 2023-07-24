@@ -347,7 +347,7 @@ class ReadLine:
                             break
                     starting=self.time_q.get()
                     ending=0.0
-                    while(ending-starting<=1.0):
+                    while(ending-starting<=0.001):
                         i = self.buf.find(HEADER)
                         if i >= 0:
                             self.buf = self.buf[i + 1:]
@@ -356,12 +356,19 @@ class ReadLine:
                             while True:
                                 ext = self.s.read(250)
                                 i = ext.find(HEADER)
+                                count = 0
+                                if count%100 == 0 & count!=0:
+                                    if  (self.time_q.get() - starting ) >= 0.001:
+                                        raise Exception("Unable to find sync byte!!")
+                                    else:
+                                        write_logs(f"From Findsync: Trying to Finding SyncByte {count}th time")
                                 if i >= 0:
                                     self.buf = ext[i + 1:]
                                     syncpos.append(i)
                                     break
                                 else:
                                     self.buf += (ext)
+                                    count += 1
                         ending=self.time_q.get()
                     position = statistics.mode(syncpos)
                 self.buf=self.buf[position:]

@@ -2,7 +2,7 @@ import customtkinter
 from mainv6 import mainfunc, print_logs
 import threading
 import json
-from final_v28 import list_of_logs
+from final_v30 import list_of_logs
 import polars as pl
 from plots_20230721 import plots
 
