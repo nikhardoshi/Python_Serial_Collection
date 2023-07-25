@@ -136,8 +136,7 @@ def findport(rl):
                 while True:
                     if rl.s.in_waiting != 0:
                         instances_w_zero_buffer_data = 0
-                        buffer_data = max(1, min(250, rl.s.in_waiting))
-                        ext = rl.s.read(buffer_data)
+                        ext = rl.s.read(150)
                         i = ext.find(HEADER)
                         count = 0
                         if count%100 == 0 & count!=0:
@@ -154,7 +153,7 @@ def findport(rl):
                             buf += ext
                             count += 1
                     else:
-                        if instances_w_zero_buffer_data>15:
+                        if instances_w_zero_buffer_data>10_000:
                             raise Exception("No data coming from serial port!")
                         else:
                             instances_w_zero_buffer_data+=1
@@ -186,7 +185,7 @@ def sensor_identification(rl,syncbyte_position):
         data = []
         for _ in range(100):
             data.append(rl.readline())
-        write_logs("Finding the sensor format")
+        write_logs(f"{rl.s.name}: Finding the sensor format")
         df = parsedata(data, rl)
         if syncbyte_position == 8:
             write_logs(f"{rl.s.name} is: 2 channel data")
@@ -206,9 +205,11 @@ def sensor_identification(rl,syncbyte_position):
             if df.shape[1]==3:
                 mean = df[df.columns[-1]].mean()
                 if mean > 500 and mean<1500:
-                    rl.sensor_id = 'ACC'
+                    rl.sensor_id = 'AC1'
                 elif mean> 5000:
                     rl.sensor_id = 'GYR'
+                elif mean<-5000:
+                    rl.sensor_id = 'AC2'
                 else:
                     raise Exception(f"Data seems to be of unknown format {rl.s.name} and synbyte_position is {syncbyte_position}")
             else: 
@@ -366,9 +367,7 @@ class ReadLine:
                             while True:
                                 if self.s.in_waiting != 0:
                                     instances_w_zero_buffer_data = 0
-                                    # buffer_data = max(1, min(250, self.s.in_waiting))
-                                    buffer_data = 250
-                                    ext = self.s.read(buffer_data)
+                                    ext = self.s.read(150)
                                     i = ext.find(HEADER)
                                     count = 0
                                     if count%100 == 0 & count!=0:
@@ -384,7 +383,7 @@ class ReadLine:
                                         self.buf += (ext)
                                         count += 1
                                 else:
-                                    if instances_w_zero_buffer_data>15:
+                                    if instances_w_zero_buffer_data>10_000:
                                         raise Exception("No data coming from serial port")
                                     else:
                                         instances_w_zero_buffer_data+=1
@@ -421,20 +420,16 @@ class ReadLine:
             if len(self.buf)<=(2*self.length):
                 if self.s.in_waiting != 0:
                     instances_w_zero_buffer_data = 0
-                    # buffer_data = max(1, min(250, self.s.in_waiting))
-                    buffer_data = 250
-                    buftemp = self.s.read(buffer_data)
+                    buftemp = self.s.read(150)
                 else:
-                    while(instances_w_zero_buffer_data < 15):
+                    while(instances_w_zero_buffer_data < 10_000):
                         if self.s.in_waiting != 0:
-                            # buffer_data = max(1, min(250, self.s.in_waiting))
-                            buffer_data = 250
-                            buftemp = self.s.read(buffer_data)
+                            buftemp = self.s.read(150)
                             instances_w_zero_buffer_data = 0
                             break
                         else:
                             instances_w_zero_buffer_data += 1
-                    if instances_w_zero_buffer_data >= 15:
+                    if instances_w_zero_buffer_data >= 10_000:
                         raise Exception("No data coming from serial port")
                 self.buf=bytearray(self.buf)
                 self.buf=self.buf+buftemp

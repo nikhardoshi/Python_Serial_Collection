@@ -6,6 +6,7 @@ from plotly.subplots import make_subplots
 import glob
 import os
 from plotly_resampler.aggregation import MinMaxLTTB
+from win32api import GetSystemMetrics
 ##pip install kaleido==0.1.0post1
 
 def plots(logpath):
@@ -29,11 +30,10 @@ def plots(logpath):
 
     # print(data.keys())
     fig = FigureResampler(
-        make_subplots(rows=len(data.keys()), cols=1), 
-        default_n_shown_samples=2000,
+        make_subplots(rows=len(data.keys()), cols=1),
         default_downsampler=MinMaxLTTB(parallel=True))
     
-    order_cols = ['Timestamp', 'CV1', 'CVR', 'CVY', 'CVB', 'VRY', 'SMG', 'ACC', 'GYR', 'PRS', 'WTF', 'SoundMain']
+    order_cols = ['Timestamp', 'CV1', 'CTR', 'CTY', 'CTB', 'VRY', 'SMG', 'AC1', 'AC2', 'GYR', 'PRS', 'WTF', 'SoundMain']
 
     i = 0
     for key in order_cols:
@@ -46,7 +46,7 @@ def plots(logpath):
     print(params)
     params['title_text'] = "Data plots " + folder_path
     params['height'] = len(data.keys()) * 600
-    params['width'] = len(data.keys()) * 600
+    params['width'] = GetSystemMetrics[0]
     fig.update_layout(**params)
     plot_path = os.path.join(folder_path, 'sensor_plots.pdf')
     print(plot_path)
