@@ -4,7 +4,6 @@ import argparse# Create the parser
 import logging
 import subprocess
 import time
-from final_v29 import write_logs, exitfunct
 
 # input wifi name and password
 # name = "IITB_IOT"
@@ -12,7 +11,8 @@ from final_v29 import write_logs, exitfunct
 
 esp_wifi_ip = {
     'Gyro' : 'http://192.168.0.185/post',
-    'Acceloremeter' : 'http://192.168.0.188/post',
+    'Acceloremeter_SM1' : 'http://192.168.0.188/post',
+    'Acceloremeter_MPU' : 'http://192.168.0.189/post',
     'Magnetometer' : 'http://192.168.0.187/post'
 }
 
@@ -63,8 +63,7 @@ def createNewConnection(name, SSID, password):
         os.system(command)
         time.sleep(1)
     except Exception as e:
-        write_logs("Error in createNewConnection() from relay_post.py \n" + str(e))
-        exitfunct(f"Error in createNewConnection() from relay_post.py \n" + str(e))
+        print("Error in createNewConnection() from relay_post.py \n" + str(e))
 
  
 # function to connect to a network   
@@ -89,12 +88,11 @@ def Wifi_connect(name, SSID, password):
         wifi = subprocess.check_output(['netsh', 'WLAN', 'show', 'interfaces'])
         data = wifi.decode('utf-8')
         if "IITB_IOT" in data:
-            write_logs(f"Connection with wifi {name} established ")
+            print(f"Connection with wifi {name} established ")
         else:
             raise Exception(f"Connection with wifi {name} not established")
     except Exception as e:
-        write_logs("Error in Wifi_connect() from relay_post.py \n" + str(e))
-        exitfunct(f"Error in Wifi_connect() from relay_post.py \n" + str(e))
+        print("Error in Wifi_connect() from relay_post.py \n" + str(e))
 
 
 connection_tried_once = False
@@ -114,7 +112,7 @@ def HTTP_message(name, SSID,password):
     '''
     global connection_tried_once
     try:
-        write_logs(f"ESP restart starts for all ESPs")
+        print(f"ESP restart starts for all ESPs")
         wifi = subprocess.check_output(['netsh', 'WLAN', 'show', 'interfaces'])
         data = wifi.decode('utf-8')
         if "IITB_IOT" in data:
@@ -122,21 +120,23 @@ def HTTP_message(name, SSID,password):
                 r = requests.post(esp_wifi_ip[key], data = "ESP_RESTART")
                 time.sleep(0.4)
                 if r.ok:
-                    write_logs(f"{key} reset successful!")
+                    print(f"{key} reset successful!")
                 else:
                     raise Exception(f"{key} reset failed!")
         elif connection_tried_once==False:
             Wifi_connect(name=name, SSID=SSID, password=password)
             connection_tried_once=True
-            write_logs("Wifi Connecton")
+            print("Wifi Connecton")
             HTTP_message(name=name, SSID=SSID, password=password)
         else:
             raise Exception(f"Message(s) to ESP32(s) not sent")
     except Exception as e:
-        write_logs("Error in HTTP_message() from relay_post.py \n" + str(e))
-        exitfunct(f"Error in HTTP_message() from relay_post.py \n" + str(e))
+        print("Error in HTTP_message() from relay_post.py \n" + str(e))
     # WiFi_connect(name, name, logpath)
 #     # python relay_post.py --state RELAY_CLOSE
 # Wifi_connect(name, name, password, logpath="C:\\Users\\Sudhendu\\Documents\\IITB\\V-guard\\Dummy File Folder\\Saved data\\_Mar 18 00_58_09 2023\\logs1.txt")
 # time.sleep(1)
 # HTTP_message(cmd="RELAY_OPEN", logpath="C:\\Users\\Sudhendu\\Documents\\IITB\\V-guard\\Dummy File Folder\\Saved data\\_Mar 18 00_58_09 2023\\logs1.txt")
+
+if __name__ == "__main__":
+    HTTP_message("IITB_IOT","IITB_IOT", "iitbiot1234")

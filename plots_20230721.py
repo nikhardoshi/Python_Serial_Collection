@@ -20,6 +20,8 @@ def plots(logpath):
         df = pl.read_csv(path)
         if path.split('\\')[-1].split('.')[0].split()[0] == 'SoundMain':
             data[file_type] = np.array(df[df.columns[0]])
+        elif path.split('\\')[-1].split('.')[0].split()[0] == 'CV1':
+            data[file_type] = np.array(df[df.columns[-1]])
         else:
             data[file_type] = np.array(df[df.columns[1]])
         if Timestamp_plotted == False:
@@ -33,7 +35,7 @@ def plots(logpath):
         make_subplots(rows=len(data.keys()), cols=1),
         default_downsampler=MinMaxLTTB(parallel=True))
     
-    order_cols = ['Timestamp', 'CV1', 'CTR', 'CTY', 'CTB', 'VRY', 'SMG', 'AC1', 'AC2', 'GYR', 'PRS', 'WTF', 'SoundMain']
+    order_cols = ['Timestamp', 'CV1', 'PRS', 'WTF', 'SMG', 'CTR', 'CTY', 'CTB', 'VRY', 'AC1', 'AC2', 'GYR', 'SoundMain']
 
     i = 0
     for key in order_cols:
@@ -45,8 +47,8 @@ def plots(logpath):
 
     print(params)
     params['title_text'] = "Data plots " + folder_path
-    params['height'] = len(data.keys()) * 600
-    params['width'] = GetSystemMetrics[0]
+    params['height'] = len(data.keys()) * 450
+    params['width'] = GetSystemMetrics(0)
     fig.update_layout(**params)
     plot_path = os.path.join(folder_path, 'sensor_plots.pdf')
     print(plot_path)

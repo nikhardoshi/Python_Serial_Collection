@@ -16,6 +16,7 @@ from scipy.io.wavfile import write
 import glob
 import queue
 import json
+import gc
 import logging
 
 '''
@@ -63,8 +64,8 @@ findport_delay=0
 err_message = 'NO ERROR Encountered!'    
 sysbreak_event = Event()
 time_worker = None
-list_of_logs = []
-
+log_queue_file = queue.Queue(maxsize=0)
+log_queue_ui = queue.Queue(maxsize=0)
 
 def setenvvars():
     '''
@@ -75,12 +76,12 @@ def setenvvars():
     '''
     try:
         global BAUD_RATE, HEADER, DATAFMT, time_to_run, fs, N, PATH2, sysbreak, count, audio_timeout, port_timeout, findport_delay
-        f = open('setup_20230714.json', 'r')
+        f = open('setup_20230725.json', 'r')
         data=json.loads(f.read())
         BAUD_RATE = data['BAUD_RATE'] 
         HEADER = int(data['HEADER'],16).to_bytes(1,"big")
         DATAFMT = data['DATAFMT']
-        time_to_run = data['time_to_run']
+        # time_to_run = data['time_to_run']
         fs = data['fs']
         PATH2 = data['PATH2']
         audio_timeout = data['audio_timeout']
@@ -113,6 +114,7 @@ def findport(rl):
         
         rl.s.reset_input_buffer()
         iters=0
+        instances_w_zero_buffer_data = 0
         syncpos=[]
         desc=''
         buf=bytearray()
@@ -133,22 +135,29 @@ def findport(rl):
                 iters+=1
             else:    
                 while True:
-                    ext = rl.s.read(250)
-                    i = ext.find(HEADER)
-                    count = 0
-                    if count%100 == 0 & count!=0:
-                        if  (time.monotonic() - starting )>= (findport_delay + 0.1):
-                            raise Exception("Unable to find sync byte!!")
+                    if rl.s.in_waiting != 0:
+                        instances_w_zero_buffer_data = 0
+                        ext = rl.s.read(150)
+                        i = ext.find(HEADER)
+                        count = 0
+                        if count%100 == 0 & count!=0:
+                            if  (time.monotonic() - starting )>= (findport_delay + 0.1):
+                                raise Exception("Unable to find sync byte!!")
+                            else:
+                                write_logs(f"From Findport: Trying to Finding SyncByte {count}th time")
+                        if i >= 0:
+                            buf = ext[i + 1:]
+                            syncpos.append(i)
+                            iters+=1
+                            break
                         else:
-                            write_logs(f"From Findport: Trying to Finding SyncByte {count}th time")
-                    if i >= 0:
-                        buf = ext[i + 1:]
-                        syncpos.append(i)
-                        iters+=1
-                        break
+                            buf += ext
+                            count += 1
                     else:
-                        buf += ext
-                        count += 1
+                        if instances_w_zero_buffer_data>15_000:
+                            raise Exception("No data coming from serial port!")
+                        else:
+                            instances_w_zero_buffer_data+=1
             ending=time.monotonic()
         if sysbreak:
             return None
@@ -158,7 +167,7 @@ def findport(rl):
         if freq<=1_500:
             rl.N = 5000
         elif freq<=30_000:
-            rl.N == 90_000
+            rl.N = 90_000
         else:
             rl.N = 1_20_000
         
@@ -177,7 +186,7 @@ def sensor_identification(rl,syncbyte_position):
         data = []
         for _ in range(100):
             data.append(rl.readline())
-        write_logs("Finding the sensor format")
+        write_logs(f"{rl.s.name}: Finding the sensor format")
         df = parsedata(data, rl)
         if syncbyte_position == 8:
             write_logs(f"{rl.s.name} is: 2 channel data")
@@ -197,9 +206,11 @@ def sensor_identification(rl,syncbyte_position):
             if df.shape[1]==3:
                 mean = df[df.columns[-1]].mean()
                 if mean > 500 and mean<1500:
-                    rl.sensor_id = 'ACC'
+                    rl.sensor_id = 'AC1'
                 elif mean> 5000:
                     rl.sensor_id = 'GYR'
+                elif mean<-5000:
+                    rl.sensor_id = 'AC2'
                 else:
                     raise Exception(f"Data seems to be of unknown format {rl.s.name} and synbyte_position is {syncbyte_position}")
             else: 
@@ -252,18 +263,6 @@ def sensor_desc_dumps():
     except Exception as e:
         write_logs(f"Error sensor_desc_dumps() \n" + str(e))
         exitfunct(f"Error sensor_desc_dumps()" + str(e))        
-
-
-def write_logs(str_):
-    str_ = str(str_)
-    global list_of_logs 
-    logging.basicConfig(filename=logpath,
-            filemode='a',
-            format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
-            datefmt='%H:%M:%S',
-            level=logging.DEBUG)
-    logging.info(str_)
-    list_of_logs.append(str_)
 
 
 
@@ -335,6 +334,7 @@ class ReadLine:
         '''
         try:
             syncpos = []
+            instances_w_zero_buffer_data = 0
             i=self.buf.find(HEADER)
             if self.buf[self.length+i +1].to_bytes(1,'big')==HEADER:
                 data = self.buf[i+1:i+1+self.length]
@@ -354,21 +354,28 @@ class ReadLine:
                             syncpos.append(i)
                         else:    
                             while True:
-                                ext = self.s.read(250)
-                                i = ext.find(HEADER)
-                                count = 0
-                                if count%100 == 0 & count!=0:
-                                    if  (self.time_q.get() - starting ) >= 0.001:
-                                        raise Exception("Unable to find sync byte!!")
+                                if self.s.in_waiting != 0:
+                                    instances_w_zero_buffer_data = 0
+                                    ext = self.s.read(150)
+                                    i = ext.find(HEADER)
+                                    count = 0
+                                    if count%100 == 0 & count!=0:
+                                        if  (self.time_q.get() - starting ) >= 0.001:
+                                            raise Exception("Unable to find sync byte!!")
+                                        else:
+                                            write_logs(f"From Findsync: Trying to Finding SyncByte {count}th time")
+                                    if i >= 0:
+                                        self.buf = ext[i + 1:]
+                                        syncpos.append(i)
+                                        break
                                     else:
-                                        write_logs(f"From Findsync: Trying to Finding SyncByte {count}th time")
-                                if i >= 0:
-                                    self.buf = ext[i + 1:]
-                                    syncpos.append(i)
-                                    break
+                                        self.buf += (ext)
+                                        count += 1
                                 else:
-                                    self.buf += (ext)
-                                    count += 1
+                                    if instances_w_zero_buffer_data>10_000:
+                                        raise Exception("No data coming from serial port")
+                                    else:
+                                        instances_w_zero_buffer_data+=1
                         ending=self.time_q.get()
                     position = statistics.mode(syncpos)
                 self.buf=self.buf[position:]
@@ -393,13 +400,26 @@ class ReadLine:
         Stores the error in log file.
         '''
         try:
+            instances_w_zero_buffer_data = 0
             if self.length==0:
                 for i in port_identity:
                     if i['Port'] == self.s.name:
                         self.length = i['DATAFMT']
                         break
             if len(self.buf)<=(2*self.length):
-                buftemp=self.s.read(250)
+                if self.s.in_waiting != 0:
+                    instances_w_zero_buffer_data = 0
+                    buftemp = self.s.read(150)
+                else:
+                    while(instances_w_zero_buffer_data < 10_000):
+                        if self.s.in_waiting != 0:
+                            buftemp = self.s.read(150)
+                            instances_w_zero_buffer_data = 0
+                            break
+                        else:
+                            instances_w_zero_buffer_data += 1
+                    if instances_w_zero_buffer_data >= 10_000:
+                        raise Exception("No data coming from serial port")
                 self.buf=bytearray(self.buf)
                 self.buf=self.buf+buftemp
             if (self.buf[0].to_bytes(1,'big')==HEADER) & (self.buf[self.length+1].to_bytes(1,'big')==HEADER):
@@ -509,7 +529,7 @@ def parsedata(x, rl):
                     df = pl.DataFrame(x_vals, orient = 'row', schema = x_vals_col_scheme)
                 return df
             else: 
-                raise Exception(f"{rl.s.name} Data is of unknown format")
+                raise Exception(f"{rl.sensor_id} Data is of unknown format")
         else:
             x_vals = [struct.unpack(rl.DATAFMT, t) for t in data]
             x_vals_col_scheme = {'column_' + str(i) : pl.Int32 for i in range(np.array(x_vals).shape[1])}    
@@ -520,8 +540,8 @@ def parsedata(x, rl):
                 df = pl.DataFrame(x_vals, orient = 'row', schema = x_vals_col_scheme)
             return df
     except Exception as e:
-        write_logs("Error in parsedata() \n" + str(e))
-        exitfunct("Error in parsedata()" + str(e))
+        write_logs(f"Error in parsedata() for {rl.sensor_id} \n" + str(e))
+        exitfunct(f"Error in parsedata() for {rl.sensor_id}" + str(e))
 
 def savedata(rl, y, key):
         '''
@@ -541,18 +561,18 @@ def savedata(rl, y, key):
             write_logs(f"{rl.s.name} savedata() called for log = {key}")
             fpath = os.path.join(savepath, "Textfiles")
             var = "%02d" % (key)
-            write_logs(f"{rl.s.name} file no: {var}")
+            write_logs(f"{rl.sensor_id} file no: {var}")
             files=str(rl.s.name)+'_'+str(var)+'.feather'
             fpath = os.path.join(fpath,files)
             y.write_ipc(fpath)
 
-            if os.path.exists(fpath):
-                write_logs(f"Name {rl.s.name} Data log {key} saved at location {fpath} ")
-            else:
-                raise Exception(f'File {rl.s.name} with log {key} was not saved due to some error!!')
+            # if os.path.exists(fpath):
+            # write_logs(f"Name {rl.sensor_id} Data log {key} saved at location {fpath} ")
+            # else:
+            # raise Exception(f'File {rl.sensor_id} with log {key} was not saved due to some error!!')
         except Exception as e:
-            write_logs("Error in savedata() \n" + str(e))
-            exitfunct("Error in savedata()" + str(e))
+            write_logs(f"Error in savedata() for {rl.sensor_id} \n" + str(e))
+            exitfunct(f"Error in savedata() for {rl.sensor_id}" + str(e))
 
 
 def audiodata():
@@ -657,16 +677,16 @@ def producer(rl):
                         timeval = rl.time_q.get()
                         x_time.append(timeval)
             rl.save_data_q.put({rl.log : [x,x_time]})
-            write_logs(f'{rl.s.name} producer() data recorded for log = {rl.log} and queue length = {rl.save_data_q.qsize()}\n')
+            write_logs(f'{rl.sensor_id} producer() data recorded for log = {rl.log} and queue length = {rl.save_data_q.qsize()}\n')
             end=rl.time_q.get()
             rl.log=rl.log+1
             rl.sync_loss_count=0
         end=rl.time_q.get()
         rl.port_data_collection = True
-        write_logs(f"{rl.s.name} producer() ran {rl.log} time(s) in {end-start} seconds")
+        write_logs(f"{rl.sensor_id} producer() ran {rl.log} time(s) in {end-start} seconds")
     except Exception as e:
-        write_logs(f"Error in producer() for {rl.s.name} \n" + str(e))
-        exitfunct(f"Error in producer() for {rl.s.name} " + str(e))
+        write_logs(f"Error in producer() for {rl.sensor_id} \n" + str(e))
+        exitfunct(f"Error in producer() for {rl.sensor_id} " + str(e))
 
 
 
@@ -695,20 +715,20 @@ def consumer(rl):
                     break
                 else: 
                     if rl.save_data_q.empty()==False:
-                        write_logs(f"{rl.s.name} consumer() queue length = {rl.save_data_q.qsize()}")
+                        write_logs(f"{rl.sensor_id} consumer() queue length = {rl.save_data_q.qsize()}")
                         dict_data = rl.save_data_q.get()
                         key_data = list(dict_data.keys())[0]
                         data_to_parse = dict_data[key_data]
                         data_parsed =  parsedata(data_to_parse, rl)
                         savedata(rl,data_parsed, key_data)
-                        write_logs(f"{rl.s.name}  data saved log={key_data}")
+                        write_logs(f"{rl.sensor_id}  data saved log={key_data}")
             else:
                 write_logs(f"Consumer() exit as system exit called")
                 break
             time.sleep(1/10**4)
     except Exception as e:
-        write_logs(f"Error in consumer() for {rl.s.name} \n" + str(e))
-        exitfunct(f"Error in consumer() for {rl.s.name} " + str(e))
+        write_logs(f"Error in consumer() for {rl.sensor_id} \n" + str(e))
+        exitfunct(f"Error in consumer() for {rl.sensor_id} " + str(e))
 
 
 
@@ -735,7 +755,7 @@ def mergefiles(readobjects):
                 filepath = os.path.join(savepath,str(rl.sensor_id))
                 filepath = filepath + ' ' + folder_name + '.csv' 
                 pathsearch=savepath +'\\Textfiles\\'+str(rl.s.name)+'_??.feather'
-                write_logs(f"{rl.s.name} No of files: {len(glob.glob(pathsearch))}")
+                write_logs(f"{rl.sensor_id} No of files: {len(glob.glob(pathsearch))}")
                 df_main = pl.DataFrame()
                 for filename in glob.glob(pathsearch):
                     df = pl.read_ipc(filename)
@@ -746,7 +766,7 @@ def mergefiles(readobjects):
                 # df_main.write_csv(filepath_sec)
 
                 # write_logs(f"{rl.s.name} merged .csv saved at {filepath} and {filepath_sec}")
-                write_logs(f"{rl.s.name} merged .csv saved at {filepath}")
+                write_logs(f"{rl.sensor_id} merged .csv saved at {filepath}")
                 
 
     except Exception as e:
@@ -770,7 +790,36 @@ def exitfunct(msg):
     sysbreak_event.set()
 
 
-def prelim_process(sp, lp):
+def write_logs(str_):
+    global log_queue_file, log_queue_ui
+    str_ = str(str_)
+    log_queue_file.put(str_)
+    log_queue_ui.put(str_)
+        
+
+def store_logs():
+    try:
+        global logpath, log_queue_file, log_queue_ui
+        logging.basicConfig(filename=logpath,
+                    filemode='a',
+                    format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+                    datefmt='%H:%M:%S',
+                    level=logging.DEBUG)
+        while True:
+            if log_queue_file.empty()==False:
+                logging.info(log_queue_file.get())
+            time.sleep(1/10**3)
+    except Exception as e:
+        print(f"Error in store_logs() {e}")
+        exitfunct(f"Error in store_logs() {e}")
+
+def set_paths(sp, lp):
+    global savepath, logpath
+    logpath = lp
+    savepath = sp
+    
+    
+def prelim_process():
     '''
     First function to be called during the execution of the program. It sets the global variables by calling 'setenvvars()'. Then it finds
     the list of serial COM ports and stores in PORTS list. It initailises the serial port in a global variable with their 'Baud_Rate'.
@@ -789,8 +838,7 @@ def prelim_process(sp, lp):
     Stores the error in the logs and continues ahead.
     '''
     global PORT, collection_process_done, savepath, readobjects, logpath, time_worker
-    logpath = lp
-    savepath = sp
+    
     try:
         write_logs("prelim_process() called")
         fpath = os.path.join(savepath, "Textfiles")
@@ -823,7 +871,7 @@ def prelim_process(sp, lp):
 
 
 
-def call_main(collect_audio):
+def call_main(collect_audio, runtime):
     '''
     The main function of the program after 'prelim_process()'. This function is too called by the UI. It controls and manages the data 
     collection, saving, audio collection and saving and merging of various batch files. It first sets the 'savepath' where the files are 
@@ -843,10 +891,11 @@ def call_main(collect_audio):
     ------
     Stores the error in the logs and continues ahead.
     '''
-    global PORT, collection_process_done, savepath, readobjects, sysbreak, time_worker
+    global PORT, collection_process_done, savepath, readobjects, sysbreak, time_worker, time_to_run
     try:
 
         collection_process_done = False
+        time_to_run = runtime
         start=time.monotonic()
         write_logs("call_main() called")
         if len(PORT)!=0:
@@ -858,7 +907,7 @@ def call_main(collect_audio):
                 audiowriter.start()
 
             for rl in readobjects:
-                write_logs(f"{rl.s.name} Is Open: {rl.s.isOpen()}")
+                write_logs(f"{rl.sensor_id} Is Open: {rl.s.isOpen()}")
             
             with concurrent.futures.ThreadPoolExecutor() as exe:
                 x = [exe.submit(producer, rl) for rl in readobjects]
@@ -867,7 +916,7 @@ def call_main(collect_audio):
 
 
             for rl in readobjects:
-                write_logs(f"{rl.s.name} port_data_collection: {rl.port_data_collection}")
+                write_logs(f"{rl.sensor_id} port_data_collection: {rl.port_data_collection}")
             
             collection_process_done=True
             if collect_audio:
@@ -882,16 +931,15 @@ def call_main(collect_audio):
             time_worker.join(timeout=2.0)
             for rl in readobjects:
                 rl.s.close()
-                write_logs(f"{rl.s.name} : Serial is closed!")
+                write_logs(f"{rl.sensor_id} : Serial is closed!")
             time.sleep(0.5)
-            mergefiles(readobjects=readobjects)
-            
-        
+            mergefiles(readobjects=readobjects)    
         else:
             write_logs("No port connected!")
             exitfunct("From call_main(): No Ports connected!!")
         
         write_logs(f"Out of all the threads total run time:{time.monotonic()-start} ")
+        gc.collect()
     
     except Exception as e:
         write_logs("Error in call_main() \n" + str(e))

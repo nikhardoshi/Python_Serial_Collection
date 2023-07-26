@@ -16,6 +16,7 @@ from scipy.io.wavfile import write
 import glob
 import queue
 import json
+import gc
 import logging
 
 '''
@@ -63,8 +64,8 @@ findport_delay=0
 err_message = 'NO ERROR Encountered!'    
 sysbreak_event = Event()
 time_worker = None
-list_of_logs = []
-
+log_queue_file = queue.Queue(maxsize=0)
+log_queue_ui = queue.Queue(maxsize=0)
 
 def setenvvars():
     '''
@@ -75,12 +76,12 @@ def setenvvars():
     '''
     try:
         global BAUD_RATE, HEADER, DATAFMT, time_to_run, fs, N, PATH2, sysbreak, count, audio_timeout, port_timeout, findport_delay
-        f = open('setup_20230714.json', 'r')
+        f = open('setup_20230725.json', 'r')
         data=json.loads(f.read())
         BAUD_RATE = data['BAUD_RATE'] 
         HEADER = int(data['HEADER'],16).to_bytes(1,"big")
         DATAFMT = data['DATAFMT']
-        time_to_run = data['time_to_run']
+        # time_to_run = data['time_to_run']
         fs = data['fs']
         PATH2 = data['PATH2']
         audio_timeout = data['audio_timeout']
@@ -153,7 +154,7 @@ def findport(rl):
                             buf += ext
                             count += 1
                     else:
-                        if instances_w_zero_buffer_data>10_000:
+                        if instances_w_zero_buffer_data>15_000:
                             raise Exception("No data coming from serial port!")
                         else:
                             instances_w_zero_buffer_data+=1
@@ -164,11 +165,11 @@ def findport(rl):
         freq = int(iters/findport_delay)
 
         if freq<=1_500:
-            rl.N = 5000
+            rl.N = 7000
         elif freq<=30_000:
-            rl.N == 90_000
+            rl.N = 1_25_000
         else:
-            rl.N = 1_20_000
+            rl.N = 2_00_000
         
         port_identity.append({"Port": rl.s.name,"Header": HEADER, "DATAFMT": syncbyte_position, "Description": desc, 'Frequency' : freq, 'Batch_Size' : rl.N})
         
@@ -262,18 +263,6 @@ def sensor_desc_dumps():
     except Exception as e:
         write_logs(f"Error sensor_desc_dumps() \n" + str(e))
         exitfunct(f"Error sensor_desc_dumps()" + str(e))        
-
-
-def write_logs(str_):
-    str_ = str(str_)
-    global list_of_logs 
-    logging.basicConfig(filename=logpath,
-            filemode='a',
-            format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
-            datefmt='%H:%M:%S',
-            level=logging.DEBUG)
-    logging.info(str_)
-    list_of_logs.append(str_)
 
 
 
@@ -571,16 +560,11 @@ def savedata(rl, y, key):
         try:
             write_logs(f"{rl.s.name} savedata() called for log = {key}")
             fpath = os.path.join(savepath, "Textfiles")
-            var = "%02d" % (key)
+            var = "%04d" % (key)
             write_logs(f"{rl.sensor_id} file no: {var}")
             files=str(rl.s.name)+'_'+str(var)+'.feather'
             fpath = os.path.join(fpath,files)
             y.write_ipc(fpath)
-
-            if os.path.exists(fpath):
-                write_logs(f"Name {rl.sensor_id} Data log {key} saved at location {fpath} ")
-            else:
-                raise Exception(f'File {rl.sensor_id} with log {key} was not saved due to some error!!')
         except Exception as e:
             write_logs(f"Error in savedata() for {rl.sensor_id} \n" + str(e))
             exitfunct(f"Error in savedata() for {rl.sensor_id}" + str(e))
@@ -761,25 +745,31 @@ def mergefiles(readobjects):
     try:
         if sysbreak == False:
             ## For text files
+            no_data_missing = True
+            sensor_w_missing_data = []
             for rl in readobjects:
-                folder_name = savepath.split('\\')[-1]
-                filepath = os.path.join(savepath,str(rl.sensor_id))
-                filepath = filepath + ' ' + folder_name + '.csv' 
-                pathsearch=savepath +'\\Textfiles\\'+str(rl.s.name)+'_??.feather'
-                write_logs(f"{rl.sensor_id} No of files: {len(glob.glob(pathsearch))}")
-                df_main = pl.DataFrame()
-                for filename in glob.glob(pathsearch):
-                    df = pl.read_ipc(filename)
-                    df_main = pl.concat([df_main, df], how = 'vertical')
+                pathsearch=savepath +'\\Textfiles\\'+str(rl.s.name)+'_????.feather'
+                if rl.log != len(glob.glob(pathsearch)):
+                    no_data_missing = False
+                    sensor_w_missing_data.append(rl.sensor_id)
+            
+            if no_data_missing:
+                for rl in readobjects:
+                    folder_name = savepath.split('\\')[-1]
+                    filepath = os.path.join(savepath,str(rl.sensor_id))
+                    filepath = filepath + ' ' + folder_name + '.csv' 
+                    pathsearch=savepath +'\\Textfiles\\'+str(rl.s.name)+'_????.feather'
+                    write_logs(f"{rl.sensor_id} No of files: {len(glob.glob(pathsearch))}")
+                    df_main = pl.DataFrame()
+                    for filename in glob.glob(pathsearch):
+                        df = pl.read_ipc(filename)
+                        df_main = pl.concat([df_main, df], how = 'vertical')
 
-                df_main.write_csv(filepath)
-                time.sleep(0.1)
-                # df_main.write_csv(filepath_sec)
-
-                # write_logs(f"{rl.s.name} merged .csv saved at {filepath} and {filepath_sec}")
-                write_logs(f"{rl.sensor_id} merged .csv saved at {filepath}")
-                
-
+                    df_main.write_csv(filepath)
+                    time.sleep(0.1)
+                    write_logs(f"{rl.sensor_id} merged .csv saved at {filepath}")
+            else:
+                raise Exception(f'Data in {sensor_w_missing_data}')
     except Exception as e:
         write_logs("Error in mergefiles() \n" + str(e))
         exitfunct("Error in mergefiles()" + str(e))
@@ -801,7 +791,36 @@ def exitfunct(msg):
     sysbreak_event.set()
 
 
-def prelim_process(sp, lp):
+def write_logs(str_):
+    global log_queue_file, log_queue_ui
+    str_ = str(str_)
+    log_queue_file.put(str_)
+    log_queue_ui.put(str_)
+        
+
+def store_logs():
+    try:
+        global logpath, log_queue_file, log_queue_ui
+        logging.basicConfig(filename=logpath,
+                    filemode='a',
+                    format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+                    datefmt='%H:%M:%S',
+                    level=logging.DEBUG)
+        while True:
+            if log_queue_file.empty()==False:
+                logging.info(log_queue_file.get())
+            time.sleep(1/10**3)
+    except Exception as e:
+        print(f"Error in store_logs() {e}")
+        exitfunct(f"Error in store_logs() {e}")
+
+def set_paths(sp, lp):
+    global savepath, logpath
+    logpath = lp
+    savepath = sp
+    
+    
+def prelim_process():
     '''
     First function to be called during the execution of the program. It sets the global variables by calling 'setenvvars()'. Then it finds
     the list of serial COM ports and stores in PORTS list. It initailises the serial port in a global variable with their 'Baud_Rate'.
@@ -820,8 +839,7 @@ def prelim_process(sp, lp):
     Stores the error in the logs and continues ahead.
     '''
     global PORT, collection_process_done, savepath, readobjects, logpath, time_worker
-    logpath = lp
-    savepath = sp
+    
     try:
         write_logs("prelim_process() called")
         fpath = os.path.join(savepath, "Textfiles")
@@ -854,7 +872,7 @@ def prelim_process(sp, lp):
 
 
 
-def call_main(collect_audio):
+def call_main(collect_audio, runtime):
     '''
     The main function of the program after 'prelim_process()'. This function is too called by the UI. It controls and manages the data 
     collection, saving, audio collection and saving and merging of various batch files. It first sets the 'savepath' where the files are 
@@ -874,10 +892,11 @@ def call_main(collect_audio):
     ------
     Stores the error in the logs and continues ahead.
     '''
-    global PORT, collection_process_done, savepath, readobjects, sysbreak, time_worker
+    global PORT, collection_process_done, savepath, readobjects, sysbreak, time_worker, time_to_run
     try:
 
         collection_process_done = False
+        time_to_run = runtime
         start=time.monotonic()
         write_logs("call_main() called")
         if len(PORT)!=0:
@@ -915,14 +934,13 @@ def call_main(collect_audio):
                 rl.s.close()
                 write_logs(f"{rl.sensor_id} : Serial is closed!")
             time.sleep(0.5)
-            mergefiles(readobjects=readobjects)
-            
-        
+            mergefiles(readobjects=readobjects)    
         else:
             write_logs("No port connected!")
             exitfunct("From call_main(): No Ports connected!!")
         
         write_logs(f"Out of all the threads total run time:{time.monotonic()-start} ")
+        gc.collect()
     
     except Exception as e:
         write_logs("Error in call_main() \n" + str(e))

@@ -2,9 +2,10 @@ import customtkinter
 from mainv8 import mainfunc, print_logs
 import threading
 import json
-from final_v31 import list_of_logs
+from final_v34 import log_queue_ui
 import polars as pl
 from plots_20230721 import plots
+import gc
 
 pl.Config.set_ascii_tables(True)  
 customtkinter.set_appearance_mode("light")
@@ -103,23 +104,19 @@ class App(customtkinter.CTk):
 
 
     def toggle(self ):
-        if len(list_of_logs) != 0: 
-            if self.prev_index !=len(list_of_logs):
-                content = ''
-                for i in range(self.prev_index, len(list_of_logs)):
-                    content += (list_of_logs[i]+"\n")
-                self.LogText1.insert("end", content)
-                self.prev_index = len(list_of_logs)
-            self.after(100, self.toggle)
+        content = ''
+        while log_queue_ui.empty()==False:
+            content+=(log_queue_ui.get() + '\n')
+        self.LogText1.insert("end", content)
+        self.after(100, self.toggle)
 
 
     def combobox_callback(self, choice):
-        print("combobox dropdown clicked:", choice)
+        # print("combobox dropdown clicked:", choice)
         if (self.combobox_var1.get()!= 'Select') & (self.combobox_var2.get()!= 'Select') & (self.combobox_var3.get()!= 'Select') & (self.combobox_var4.get()!= 'Select'):
             self.Set_DOE.configure(state = 'normal')
             print('All variables set')
-        else:
-            print('All variables not set yet')
+            # print('All variables not set yet')
 
     def Set_DOE_button(self):
         self.Enter_Button.configure(state = 'normal')
@@ -147,5 +144,7 @@ class App(customtkinter.CTk):
         thread_.start()
 
 if __name__ == "__main__":
+    gc.collect()
     app = App()
     app.mainloop()
+    gc.collect()

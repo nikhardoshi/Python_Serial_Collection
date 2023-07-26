@@ -1,12 +1,11 @@
-from relay_post_GUI_20230714 import HTTP_message, Wifi_connect
-from final_v30 import call_main, prelim_process, get_error_display, sysbreak_event, exitfunct, list_of_logs
+from final_v34 import call_main, prelim_process, get_error_display, sysbreak_event, exitfunct, write_logs, store_logs, set_paths
 import threading
 import json
 import time
-import logging
+import gc
 import os
 import re
-json_file_path = "setup_20230714.json"
+json_file_path = "setup_20230725.json"
 
 '''
 Declaring the global parameters used throughout the code:
@@ -24,35 +23,27 @@ logpath     :   The path of the Log files that stores the entire process of the 
 
 sysbreak = False
 processes_UI = ''
-count = ''
+# count = ''
 timeout_time = None
 f = open(json_file_path, 'r')
 data_setup=json.loads(f.read())
 PATH = data_setup['PATH']
 name = data_setup['name']
 password = data_setup['password']
-timeout_time = data_setup['time_to_run']
+timeout_time_air = data_setup['time_to_run_air']
+timeout_time_water = data_setup['time_to_run_water']
+timeout_time = None
+time_to_run = None
+collect_audio = None
 f.close()
 
 g = open('process.txt', 'r')
 data_process = g.read()
 inst = [int(num) for num in re.findall('delay.([\d]*).', data_process)]
-timeout_time += sum(inst)
 g.close()
 
 text_obj = ''
 logpath = ''
-
-def write_logs(str_):
-    str_ = str(str_)
-    global list_of_logs 
-    logging.basicConfig(filename=logpath,
-            filemode='a',
-            format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
-            datefmt='%H:%M:%S',
-            level=logging.DEBUG)
-    logging.info(str_)
-    list_of_logs.append(str_)
 
 def mainfunc(DOE):
     '''
@@ -72,33 +63,23 @@ def mainfunc(DOE):
     An error which is recorded in the Logs file and continues ahead.
     '''
     try:
-        global processes_UI, count, sysbreak, text_obj, logpath, data_process
+        global processes_UI, count, sysbreak, text_obj, logpath, data_process, collect_audio, time_to_run
         savepath, logpath = create_folders(name = DOE)
+        set_paths(sp =savepath, lp = logpath)
         start = time.time()
+        thread_logs = threading.Thread(target=store_logs, daemon=True)
+        thread_logs.start()
         write_logs('Starting the processes')
-
         processes_UI += "At time 0, processes starting!!\n"
-        # HTTP_message("IITB_IOT","IITB_IOT", "iitbiot1234")
-        # delay(3)
-        prelim_process(sp =savepath, lp = logpath)
-        collect_audio = None
+        prelim_process()
         processes_in_list = data_process.split('\n')
-        for step in processes_in_list:
-            if 'call_main(' in step:
-                if "True" in step:
-                    collect_audio = True
-                else:
-                    collect_audio = False
-        thread1 = threading.Thread(target=call_main, args=(collect_audio, ), daemon=True)
+        thread1 = threading.Thread(target=call_main, args=(collect_audio, time_to_run, ), daemon=True)
         thread2 = threading.Thread(target=sysbreak_exit, daemon=True)
         thread2.start()
-        write_logs(processes_in_list)
         for step in processes_in_list:
             if sysbreak:
                 processes_UI += "At time " + str(time.time() - start) + " system wide exit called!\n"
                 break
-            # step = step.split('\n')[0]
-            # write_logs(step)
             processes_UI += "At time " + str(time.time() - start) + " " + str(step)+ " called!\n"
             if ("call_main(" in step):
                     write_logs("Independent call_main() thread started")
@@ -117,6 +98,11 @@ def mainfunc(DOE):
             text_obj = f"Files stored in {savepath}"
         else:
             write_logs("Error occured during execution of mainfunc() in mainv, one or more processes may have failed!!")
+        write_logs(savepath)
+        write_logs("Joining logs!")
+        if thread_logs.is_alive():
+            thread_logs.join(timeout = 1.0)      
+        gc.collect()
     except Exception as e:
         text_obj = "In mainv file's mainfunc(), error: " + str(e)
 
@@ -129,7 +115,8 @@ def print_logs():
 
 
 def sysbreak_exit():
-    global text_obj, processes_UI, sysbreak
+    global text_obj, processes_UI, sysbreak, timeout_time
+    timeout_time += sum(inst)
     sysbreak_event.wait(timeout= float(timeout_time + 2))
     text_obj = get_error_display()
     if text_obj != 'NO ERROR Encountered!':
@@ -158,13 +145,24 @@ def delay(step):
         exitfunct(f"Error in delay() from mainv()" + str(e))
 
 def create_folders(name):
+    global timeout_time, collect_audio, time_to_run
     try:
+        if name.split('_')[-2] == "In air":
+            collect_audio = True
+            timeout_time = timeout_time_air
+            time_to_run = timeout_time_air
+        else:
+            collect_audio = False
+            timeout_time = timeout_time_water
+            time_to_run = timeout_time_water
         count = str(time.asctime()[4:]).replace(":", "_")
         filecount = str(name) + ' ' + str(count)
         savepath = os.path.join(PATH, filecount)
         os.makedirs(savepath)
         logpath = os.path.join(savepath,"logs.txt")
+        with open('logpath.txt', 'w') as f:
+            f.write(logpath)
         return savepath, logpath
     except Exception as e:
-        write_logs(f"Error in create_folders() from mainv() \n" + str(e))
+        print(f"Error in create_folders() from mainv() \n" + str(e))
         exitfunct(f"Error in create_folders() from mainv()" + str(e))
